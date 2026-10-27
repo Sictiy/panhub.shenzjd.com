@@ -11,18 +11,7 @@ import vue from "@vitejs/plugin-vue";
  * - 全部代码打成一个 app.js，避免多 chunk 在无 rewrite 的静态托管上 404
  */
 export default defineConfig({
-  plugins: [
-    vue({
-      template: {
-        compilerOptions: {
-          // site-navbar 是外部脚本注册的原生 Web Component
-          // （含站点导航与头像登录），提示 Vue 按自定义元素处理，
-          // 否则会被当成未解析组件、渲染不出来
-          isCustomElement: (tag: string) => tag === "site-navbar",
-        },
-      },
-    }),
-  ],
+  plugins: [vue()],
   base: "./",
   resolve: {
     alias: {

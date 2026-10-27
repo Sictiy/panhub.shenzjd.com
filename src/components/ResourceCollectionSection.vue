@@ -56,6 +56,7 @@ import { computed, onMounted, ref } from "vue";
 import { CURATED_CATEGORIES } from "../config/curatedCategories";
 import { PLATFORM_INFO } from "../config/platforms";
 import { API_BASE } from "../config";
+import { isPromotionalLink } from "../utils/promotionalLinks";
 
 interface CollectionItem {
   t: string;
@@ -101,7 +102,7 @@ async function load() {
     const origin = API_BASE.replace(/\/api\/?$/, "");
     const res = await fetch(`${origin}/resource-data/collection.json`);
     const data: CollectionPayload = await res.json();
-    cache = Array.isArray(data?.items) ? data.items : [];
+    cache = Array.isArray(data?.items) ? data.items.filter((item) => !isPromotionalLink(item.u) && !isPromotionalLink(item.t)) : [];
   } catch {
     cache = [];
   }

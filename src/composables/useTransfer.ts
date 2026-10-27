@@ -19,6 +19,7 @@
 import { computed, ref } from "vue";
 import { ApiError, apiPost } from "../api/client";
 import { getAnonTicketSafe } from "../api/auth";
+import { isPromotionalLink } from "../utils/promotionalLinks";
 import { buildShareText, driverOf } from "../utils/shareText";
 
 export type TransferStatus = "idle" | "loading" | "done" | "dead";
@@ -181,23 +182,7 @@ export function useTransferDialog() {
   };
 }
 
-/**
- * 401 时的登录回调（模块级单例）：页面入口（App.vue）注册一次，
- * 任意组件触发的「获取」（ResultGroup 等）共享同一处理器——吊起 wx-auth
- * SDK 登录弹窗并等登录结果，登录成功后自动重试本次获取。
- */
-let authRequiredHandler: (() => Promise<boolean> | boolean) | null = null;
-
-/**
- * @param onAuthRequired 请求返回 401（未登录）时回调（对齐官方站 2026-09-24：
- *        搜索对访客放开后，登录卡点收敛到「获取」——直接吊起 wx-auth SDK 登录
- *        弹窗，**等同用户手动点登录**；返回 true（登录成功）后本次获取自动重试，
- *        不打断流程）
- */
-export function useTransfer(onAuthRequired?: () => Promise<boolean> | boolean) {
-  // 模块级注册（后注册覆盖前者；ResultGroup 等无参调用不覆盖）
-  if (onAuthRequired) authRequiredHandler = onAuthRequired;
-
+export function useTransfer() {
   function showToast(msg: string) {
     toast.value = msg;
     if (toastTimer) clearTimeout(toastTimer);
@@ -268,38 +253,30 @@ export function useTransfer(onAuthRequired?: () => Promise<boolean> | boolean) {
         return apiPost<{ code: number; data: any }>("/transfer", payload);
       };
       let shareText = item.url;
-      // 401 自动续跑（访客准入配套）：未登录时**直接吊起 wx-auth SDK 登录弹窗**
-      //（等同用户手动点登录），登录成功后自动重试本次获取——不弹「获取失败」、
-      // 不需要再点一次。
       let resp: { code: number; data: any };
-      for (let attempt = 0; ; attempt++) {
-        try {
-          resp = await doFetchTransfer();
-          break;
-        } catch (e) {
-          const unauthorized =
-            (e instanceof ApiError && e.statusCode === 401) ||
-            (e instanceof ApiError && e.data?.code === "UNAUTHORIZED");
-          if (attempt === 0 && unauthorized && authRequiredHandler) {
-            statusMap.value[key] = "idle";
-            // 先收起「正在获取」弹窗：它的 z-index 高于 SDK 登录弹窗，
-            // 不收起会把登录二维码盖住（官方站线上实测）
-            closeTransferDialog();
-            const ok = await authRequiredHandler();
-            if (!ok) {
-              // 登录中断/失败：恢复弹窗给提示
-              openTransferDialog(key);
-              failTransferDialog("登录成功后请再点一次「获取」", "error");
-              return;
-            }
-            // 登录成功：恢复「正在获取」并自动重试（仅一次，防死循环）
-            openTransferDialog(key);
-            continue;
-          }
-          throw e;
+      try {
+        resp = await doFetchTransfer();
+      } catch (e) {
+        const unauthorized = e instanceof ApiError &&
+          (e.statusCode === 401 || e.data?.code === "UNAUTHORIZED");
+        if (unauthorized) {
+          statusMap.value[key] = "idle";
+          await ensureMinLoading(startedAt);
+          failTransferDialog("上游服务要求身份验证，暂时无法获取此资源");
+          return;
         }
+        statusMap.value[key] = "idle";
+        await ensureMinLoading(startedAt);
+        failTransferDialog("上游服务暂时不可用，请稍后重试");
+        return;
       }
-      // 响应处理（与请求分离：401 重试只重发请求，处理逻辑只跑一次）
+      if (isPromotionalLink(resp.data?.share_url)) {
+        statusMap.value[key] = "idle";
+        await ensureMinLoading(startedAt);
+        failTransferDialog("上游未提供可用的资源链接");
+        return;
+      }
+      // 处理上游返回的资源状态。
       try {
         // ① 确定性失效：链接不可用，弹窗内给原因
         if (resp.code === 1 && resp.data?.dead) {
@@ -369,8 +346,7 @@ export function useTransfer(onAuthRequired?: () => Promise<boolean> | boolean) {
           rememberDelivery(key, resp.data, resp.data.share_url);
         }
       } catch (e) {
-        // 401 已在上面的重试循环里处理（吊登录弹窗 + 自动重试），
-        // 走到这里的是登录后仍失败或其他 HTTP 错误（配额/tid 过期等）：
+        // 其他 HTTP 错误（配额/tid 过期等）：
         // 后端响应里带原链接则兜底。
         // 两道过滤：必须是 http(s)、且不含 /api/（接口路径不会是资源链接）。
         const raw = e instanceof ApiError ? String(e.data?.url || "") : "";

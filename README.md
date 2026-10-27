@@ -2,7 +2,7 @@
 
 > 一个搜索框，搜遍全网网盘资源 —— 即搜即得、聚合去重、轻量部署
 
-**在线体验**：<https://panhub.shenzjd.com>
+**在线体验**：<https://pan.xulm.host>
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fwu529778790%2Fpanhub.shenzjd.com)
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https%3A%2F%2Fgithub.com%2Fwu529778790%2Fpanhub.shenzjd.com)
@@ -12,7 +12,7 @@
 - **多源聚合**：Telegram 频道 + 第三方插件，聚合去重、智能排序
 - **一键获取**：接入转存的网盘可换取新分享链接，自动拼装各网盘官方口令；
   桌面端出**资源二维码**（扫码转手机端保存），移动端地址点开即用
-- **访客可搜**：搜索不强制登录（匿名票据），登录卡点收敛到「获取」转存
+- **访客可搜**：搜索使用上游匿名票据；部分需要身份验证的资源可能无法获取
 - **链接探活**：疑似失效弱提示（琥珀角标），真实转存给结论，不误拦
 - **推荐词 + 精选资源**：热词快搜与精选资源清单，点击即搜
 - **零运维**：纯静态页面，构建产物丢到任意静态托管即可运行
@@ -63,10 +63,10 @@ docker run -d --name panhub.shenzjd.com -p 8080:80 ghcr.io/wu529778790/panhub.sh
 
 阿里云盘 / 夸克 / 百度网盘 / 115 / 迅雷 / UC / 天翼云盘 / 123 网盘 / 移动云盘 / 磁力链接
 
-## 🔐 登录
+## 搜索服务
 
-搜索对访客开放（wx-auth 签发的匿名票据随请求上报）；「获取」转存需登录：
-登录态由独立的认证服务 wx-auth 校验（关注公众号 + 验证码 / 小程序扫码）。
+搜索和资源获取依赖上游 PanHub 服务，匿名搜索仍使用其认证 SDK 申请匿名票据。
+本站不提供微信登录入口；上游要求身份验证时，相关资源无法在本站获取。
 
 ## ⚠️ 注意事项
 

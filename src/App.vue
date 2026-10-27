@@ -7,35 +7,6 @@
       <div class="blob blob-3"></div>
     </div>
 
-    <!--
-      顶部导航：外部 Web Component（站点导航 + 头像登录）。
-      登录态与本页共用同一个 wx-auth 单例，登录成功会同步到 isVerified，
-      因此搜索前的认证校验不会重复弹窗。
-    -->
-    <site-navbar></site-navbar>
-
-    <!-- 公告条 -->
-    <div v-if="announcementVisible" class="announce-bar" role="status">
-      <span class="announce-bar__icon" aria-hidden="true">📢</span>
-      <div ref="viewportEl" class="announce-bar__viewport">
-        <span :key="announcementIndex" class="announce-bar__slide">
-          <span
-            ref="textEl"
-            class="announce-bar__text"
-            :class="{ 'announce-bar__text--scrolling': scrollDistance > 0 }"
-            :style="scrollStyle">
-            <a
-              v-if="currentAnnouncement?.link"
-              :href="currentAnnouncement.link"
-              target="_blank"
-              rel="noopener">{{ currentAnnouncement.text }}</a>
-            <template v-else>{{ currentAnnouncement?.text }}</template>
-          </span>
-        </span>
-      </div>
-      <button class="announce-bar__close" type="button" aria-label="关闭公告" title="关闭" @click="dismissAnnouncement">✕</button>
-    </div>
-
     <main class="main">
       <!-- 品牌区（对齐官方站 2026-09-22 三改）：居中一行「logo + 站名」，
            下面一句描述，无卡片、无渐变底。搜索站的首屏只需要回答"这是谁、干什么"，
@@ -208,10 +179,8 @@
       <span class="footer-copy">PanHub · 聚合搜索，不存储任何文件</span>
     </footer>
 
-    <!-- 「获取」等待/复制弹窗（含积分不足看广告、限流、回退等全部状态） -->
+    <!-- 「获取」等待/复制弹窗 -->
     <TransferStatusDialog />
-    <!-- 弹窗公告：内容来自官方站后台配置（/api/notice-popup），关闭时自动不弹 -->
-    <NoticeModal />
   </div>
 
   <!-- 全站 Toast -->
@@ -221,23 +190,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onMounted, ref } from "vue";
 import SearchBox from "./components/SearchBox.vue";
 import ResultGroup from "./components/ResultGroup.vue";
 import TransferStatusDialog from "./components/TransferStatusDialog.vue";
-import { useTransfer } from "./composables/useTransfer";
 import HotKeywordSection from "./components/HotKeywordSection.vue";
 import CuratedResourceSection from "./components/CuratedResourceSection.vue";
 import ResourceCollectionSection from "./components/ResourceCollectionSection.vue";
-import NoticeModal from "./components/NoticeModal.vue";
-import { API_BASE } from "./config";
 import { useSearch } from "./composables/useSearch";
-import { useAnnouncement } from "./composables/useAnnouncement";
 import { useToast } from "./composables/useToast";
 import { useDarkMode } from "./composables/useDarkMode";
 import { useHotKeywords } from "./composables/useHotKeywords";
 import { platformInfo } from "./config/platforms";
-import { forceVerify } from "./api/auth";
 import { orderDriverGroups } from "./utils/driverPriority";
 import type { MergedLink } from "./types";
 
@@ -268,12 +232,6 @@ const {
 // 保留一位小数（如 7.5s）——整数会把 1~2 秒档位压成同一个数字，看不出差别。
 const elapsedSeconds = computed(() => (elapsedMs.value / 1000).toFixed(1));
 
-const {
-  items: announcementItems,
-  visible: announcementVisible,
-  load: loadAnnouncement,
-  dismiss: dismissAnnouncement,
-} = useAnnouncement();
 const { toast } = useToast();
 const { init: initDarkMode } = useDarkMode();
 
@@ -282,76 +240,10 @@ const { keywords: hotKeywords, ensureLoaded: ensureHotKeywords } = useHotKeyword
 // 空状态推荐词：取词表前 5 个（官方站 2026-09-23 口径，替代已下线的热搜统计）
 const emptySuggestions = computed(() => hotKeywords.value.slice(0, 5));
 
-// 站点 logo（与 index.html 的 favicon 同源）
-const LOGO_URL =
-  "https://cdn.jsdmirror.com/gh/wu529778790/img.shenzjd.com@master/blog/imgx-20260828-151509-5bk7.svg";
-
-const announcementIndex = ref(0);
-let rotateTimer: ReturnType<typeof setInterval> | null = null;
-
-const currentAnnouncement = computed(
-  () => announcementItems.value[announcementIndex.value] ?? null
-);
-
-// 公告跑马灯：单条一行放不下时左右来回滚动（hover 暂停），能放下就静止居中。
-// 是否滚动由实测宽度决定——不能只看字数，等宽字体与标点都会影响实际宽度。
-const viewportEl = ref<HTMLElement | null>(null);
-const textEl = ref<HTMLElement | null>(null);
-const scrollDistance = ref(0); // >0 表示当前条目超宽，需要来回滚动
-
-const scrollStyle = computed(() => {
-  if (scrollDistance.value <= 0) return {};
-  const duration = Math.max(6, Math.round(scrollDistance.value / 30));
-  return {
-    "--announce-scroll-distance": `-${scrollDistance.value}px`,
-    "--announce-scroll-duration": `${duration}s`,
-  };
-});
-
-/** 超宽判定：文本实际宽度超出视口可视宽度才启用左右滚动动画 */
-function measureScroll() {
-  const vp = viewportEl.value;
-  const tx = textEl.value;
-  if (!vp || !tx) {
-    scrollDistance.value = 0;
-    return;
-  }
-  const dist = Math.ceil(tx.scrollWidth - vp.clientWidth);
-  scrollDistance.value = dist > 4 ? dist : 0;
-}
-
-watch(announcementIndex, () => {
-  nextTick(measureScroll);
-});
-
-function onResize() {
-  if (announcementVisible.value) measureScroll();
-}
+// 使用本地站点图标，避免加载外部站点资源。
+const LOGO_URL = "./icons/pwa-192.png";
 
 // ===== 搜索 =====
-
-// 「获取」401 处理（对齐官方站 2026-09-24）：搜索对访客放开后，登录卡点收敛到
-// 「获取」——401 时直接吊起 wx-auth SDK 登录弹窗（等同手动点登录），
-// forceVerify 在登录成功（isVerified 置位）时返回 true，useTransfer 收到后
-// 自动重试本次获取——全程无需再点一次。模块级注册：ResultGroup 等无参调用
-// 触发的获取同样生效。
-useTransfer(() => forceVerify());
-
-/** 服务端 401：登录态失效 → 强制重新认证后重试 */
-let authRetrying = false;
-async function handleAuthRequired() {
-  if (authRetrying) return;
-  authRetrying = true;
-  try {
-    const ok = await forceVerify();
-    if (ok) {
-      resetSearch();
-      await doSearch();
-    }
-  } finally {
-    authRetrying = false;
-  }
-}
 
 async function doSearch() {
   const keyword = kw.value.trim();
@@ -360,7 +252,6 @@ async function doSearch() {
   await performSearch({
     keyword,
     cat: searchCat.value || undefined,
-    onAuthRequired: handleAuthRequired,
   });
 }
 
@@ -393,7 +284,6 @@ async function handleContinueSearch() {
   await continueSearch({
     keyword: kw.value.trim(),
     cat: searchCat.value || undefined,
-    onAuthRequired: handleAuthRequired,
   });
 }
 
@@ -454,21 +344,6 @@ onMounted(async () => {
   initDarkMode();
   // 推荐词表（热词区块 + 空状态推荐词共用）：只在挂载时拉一次
   void ensureHotKeywords();
-  // 窗口尺寸变化时重新判定公告是否需要滚动
-  window.addEventListener("resize", onResize);
-
-  loadAnnouncement().then(async () => {
-    if (announcementItems.value.length > 1) {
-      rotateTimer = setInterval(() => {
-        announcementIndex.value =
-          (announcementIndex.value + 1) % announcementItems.value.length;
-      }, 6000);
-    }
-    // 首条公告渲染完量一次宽度，决定是否需要来回滚动
-    await nextTick();
-    measureScroll();
-  });
-
   // 从 URL 读取搜索词与类别，自动搜索（?q= 直访）
   const params = new URLSearchParams(window.location.search);
   const q = params.get("q");
@@ -480,10 +355,6 @@ onMounted(async () => {
   }
 });
 
-onBeforeUnmount(() => {
-  if (rotateTimer) clearInterval(rotateTimer);
-  window.removeEventListener("resize", onResize);
-});
 </script>
 
 <style scoped>
@@ -547,74 +418,6 @@ onBeforeUnmount(() => {
   66% {
     transform: translate(-20px, 20px) scale(0.9);
   }
-}
-
-/* ===== 公告条 ===== */
-.announce-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  margin-top: 12px;
-  padding: 7px 16px;
-  background: linear-gradient(90deg, rgba(15, 118, 110, 0.08) 0%, rgba(59, 130, 246, 0.08) 100%);
-  border-bottom: 1px solid rgba(15, 118, 110, 0.12);
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-.announce-bar__viewport {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-align: center;
-}
-.announce-bar__slide {
-  display: inline-block;
-  max-width: 100%;
-}
-.announce-bar__slide a {
-  color: var(--primary);
-  text-decoration: underline;
-}
-.announce-bar__text {
-  display: inline-block;
-  white-space: nowrap;
-}
-.announce-bar__text a {
-  color: var(--primary);
-  text-decoration: underline;
-}
-/* 超宽来回滚动（alternate 往返）；hover 暂停方便阅读/点链接 */
-.announce-bar__text--scrolling {
-  animation: announceBounce var(--announce-scroll-duration, 12s) ease-in-out infinite alternate;
-  will-change: transform;
-}
-.announce-bar__viewport:hover .announce-bar__text--scrolling {
-  animation-play-state: paused;
-}
-@keyframes announceBounce {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(var(--announce-scroll-distance, -100px));
-  }
-}
-.announce-bar__close {
-  flex-shrink: 0;
-  background: none;
-  border: none;
-  font-size: 14px;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: 0 4px;
-  line-height: 1;
-}
-.announce-bar__close:hover {
-  color: var(--text-secondary);
 }
 
 /* ===== 主内容 ===== */

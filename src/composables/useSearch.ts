@@ -17,13 +17,12 @@ import { apiUrl, authHeaders } from "../api/client";
 import { getAnonTicketSafe } from "../api/auth";
 import type { MergedLinks } from "../types";
 import { countMerged, mergeMergedByType } from "../utils/merge";
+import { filterPromotionalResults } from "../utils/promotionalLinks";
 
 export interface SearchOptions {
   keyword: string;
   /** 类别搜索（空 = 全部网盘） */
   cat?: string;
-  /** 服务端返回 401 时回调（登录态失效，需要重新认证） */
-  onAuthRequired?: () => void;
 }
 
 interface ParsedSSEEvent {
@@ -110,7 +109,7 @@ export function useSearch() {
     initialTotal = 0,
     maxResults?: number
   ): Promise<void> {
-    const { keyword, cat, onAuthRequired } = options;
+    const { keyword, cat } = options;
 
     const params: Record<string, string | number | undefined> = { kw: keyword };
     if (cat) params.cat = cat;
@@ -129,6 +128,7 @@ export function useSearch() {
     activeControllers.push(controller);
 
     let currentMerged: MergedLinks = initialMerged ? { ...initialMerged } : {};
+    let removedPromotionalResults = false;
 
     try {
       const resp = await fetch(apiUrl("/search.stream", params), {
@@ -139,7 +139,7 @@ export function useSearch() {
       });
 
       if (resp.status === 401) {
-        onAuthRequired?.();
+        state.value.error = "上游搜索服务需要身份验证，暂时无法搜索";
         return;
       }
       if (!resp.ok) {
@@ -177,9 +177,11 @@ export function useSearch() {
             try {
               const payload = JSON.parse(evt.data);
               if (payload.merged) {
+                const filtered = filterPromotionalResults(payload.merged);
+                removedPromotionalResults ||= countMerged(filtered) < countMerged(payload.merged);
                 currentMerged = freshSearch
-                  ? payload.merged
-                  : mergeMergedByType(currentMerged, payload.merged);
+                  ? filtered
+                  : mergeMergedByType(currentMerged, filtered);
                 freshSearch = false;
                 state.value.merged = currentMerged;
                 state.value.total = countMerged(currentMerged);
@@ -195,14 +197,19 @@ export function useSearch() {
                 payload.merged &&
                 (freshSearch || Object.keys(payload.merged).length > 0)
               ) {
+                const filtered = filterPromotionalResults(payload.merged);
+                removedPromotionalResults ||= countMerged(filtered) < countMerged(payload.merged);
                 currentMerged = freshSearch
-                  ? payload.merged
-                  : mergeMergedByType(currentMerged, payload.merged);
+                  ? filtered
+                  : mergeMergedByType(currentMerged, filtered);
                 state.value.merged = currentMerged;
               }
               freshSearch = false;
               // total 始终按前端真实数据重算，避免数字被服务端快照覆盖变小
               state.value.total = countMerged(currentMerged);
+              if (removedPromotionalResults && state.value.total === 0) {
+                state.value.error = "上游仅返回推广占位内容，暂未提供可用资源";
+              }
 
               if (Array.isArray(payload.completedIndices)) {
                 for (const i of payload.completedIndices) {

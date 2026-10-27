@@ -72,6 +72,7 @@
 import { ref, computed, onMounted } from "vue";
 import { PLATFORM_INFO } from "../config/platforms";
 import { API_BASE } from "../config";
+import { isPromotionalLink } from "../utils/promotionalLinks";
 import { CURATED_CATEGORIES, DEFAULT_CURATED_CATEGORY } from "../config/curatedCategories";
 
 /**
@@ -139,7 +140,7 @@ async function fetchItems() {
     const data: CuratedResponse = await res.json();
     const list = data?.code === 0 ? data.data?.items : [];
     items.value = Array.isArray(list)
-      ? list.filter((it) => it && typeof it.url === "string" && it.url)
+      ? list.filter((it) => it && typeof it.url === "string" && it.url && !isPromotionalLink(it.url) && !isPromotionalLink(it.note))
       : [];
   } catch {
     items.value = [];
