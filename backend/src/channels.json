@@ -1,5 +1,8 @@
 {
   "priorityChannels": [
+    "clouddriveresources",
+    "yunpanx",
+    "tgsearchers7",
     "tgsearchers3",
     "share_aliyun",
     "Quark_Movies",
@@ -10,6 +13,9 @@
     "tianyifc"
   ],
   "defaultChannels": [
+    "clouddriveresources",
+    "yunpanx",
+    "tgsearchers7",
     "tgsearchers3",
     "yunpanxunlei",
     "tianyifc",

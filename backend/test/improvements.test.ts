@@ -4,7 +4,7 @@ import http from "node:http";
 import { once } from "node:events";
 import { load } from "cheerio";
 import { MemoryCache } from "../src/core/cache/memoryCache";
-import { parseChannelPage } from "../src/core/services/tg";
+import { fetchTgChannelPosts, parseChannelPage } from "../src/core/services/tg";
 import { withTimeout } from "../src/core/utils/timeout";
 import { requestFetch, runWithNetworkContext } from "../src/core/utils/networkContext";
 import { PluginManager, BaseAsyncPlugin } from "../src/core/plugins/manager";
@@ -36,6 +36,27 @@ test("Telegram parser extracts magnet and nested share links without accepting l
   assert.equal(results[0].datetime, "");
   assert.deepEqual(results[0].links.map(x => x.type).sort(), ["magnet", "quark"]);
   assert.equal(results[0].links.find(x => x.type === "quark")?.password, "abcd");
+});
+
+test("Telegram search sends the keyword on every page and preserves it for the mirror", async () => {
+  const calls: string[] = [];
+  const page = (id: number, more: boolean) => `<div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="news/${id}"><div class="tgme_widget_message_text">王楚然 <a href="https://pan.quark.cn/s/${id}">资源</a></div></div></div>${more ? '<a href="/s/news?q=ignored&amp;before=123">more</a>' : ''}`;
+  const results = await fetchTgChannelPosts("news", "王楚然", {
+    limitPerChannel: 40,
+    fetchPage: async (url) => {
+      calls.push(url);
+      if (calls.length === 1) throw new Error("direct unavailable");
+      return calls.length === 2 ? page(1, true) : page(2, false);
+    },
+  });
+  assert.equal(results.length, 2);
+  const direct = new URL(calls[0]);
+  const mirror = new URL(calls[1]);
+  const next = new URL(calls[2]);
+  assert.equal(direct.searchParams.get("q"), "王楚然");
+  assert.equal(mirror.searchParams.get("q"), "王楚然");
+  assert.equal(next.searchParams.get("q"), "王楚然");
+  assert.equal(next.searchParams.get("before"), "123");
 });
 
 test("timeout and cancellation abort underlying HTTP requests", async (t) => {

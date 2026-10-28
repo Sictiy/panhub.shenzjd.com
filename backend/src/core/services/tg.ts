@@ -7,6 +7,7 @@ export interface TgFetchOptions {
   limitPerChannel?: number;
   userAgent?: string;
   signal?: AbortSignal;
+  fetchPage?: (url: string, options: { headers: Record<string, string>; signal?: AbortSignal; timeout: number }) => Promise<string>;
 }
 
 export async function fetchTgChannelPosts(
@@ -21,26 +22,29 @@ export async function fetchTgChannelPosts(
   const limit = options.limitPerChannel ?? 50;
   const maxPages = Math.ceil(limit / 20);
   const allResults: SearchResult[] = [];
+  const fetchPage = options.fetchPage ?? ((url, requestOptions) => ofetch<string>(url, requestOptions));
   let before: string | undefined;
 
   for (let page = 0; page < maxPages && allResults.length < limit; page++) {
     if (options.signal?.aborted) break;
     const baseUrl = `https://t.me/s/${encodeURIComponent(channel)}`;
-    const url = before ? `${baseUrl}?before=${before}` : baseUrl;
+    const params = new URLSearchParams();
+    if (keyword.trim()) params.set("q", keyword.trim());
+    if (before) params.set("before", before);
+    const query = params.toString();
+    const url = query ? `${baseUrl}?${query}` : baseUrl;
 
     let html = "";
     try {
-      html = await ofetch<string>(url, { headers: { "user-agent": ua }, signal: options.signal, timeout: 5000 });
+      html = await fetchPage(url, { headers: { "user-agent": ua }, signal: options.signal, timeout: 5000 });
     } catch {}
 
     if (options.signal?.aborted) break;
     if (!html || !html.includes("tgme_widget_message")) {
-      const mirrorUrl = before
-        ? `https://r.jina.ai/https://t.me/s/${encodeURIComponent(channel)}?before=${before}`
-        : `https://r.jina.ai/https://t.me/s/${encodeURIComponent(channel)}`;
+      const mirrorUrl = `https://r.jina.ai/${url}`;
 
       try {
-        html = await ofetch<string>(mirrorUrl, { headers: { "user-agent": ua }, signal: options.signal, timeout: 5000 });
+        html = await fetchPage(mirrorUrl, { headers: { "user-agent": ua }, signal: options.signal, timeout: 5000 });
       } catch {}
     }
 
