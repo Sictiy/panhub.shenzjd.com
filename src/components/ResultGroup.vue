@@ -196,6 +196,7 @@ async function handleGet(r: MergedLink) {
     tid: r.tid,
     url: r.url,
     name: r.note,
+    password: r.password,
     // 直链已剥离，盘型只能由分组 key 带下来
     driver: props.type,
   });

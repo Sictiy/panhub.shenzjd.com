@@ -12,7 +12,7 @@
 - **多源聚合**：Telegram 频道 + 第三方插件，聚合去重、智能排序
 - **一键获取**：接入转存的网盘可换取新分享链接，自动拼装各网盘官方口令；
   桌面端出**资源二维码**（扫码转手机端保存），移动端地址点开即用
-- **访客可搜**：搜索使用上游匿名票据；部分需要身份验证的资源可能无法获取
+- **独立搜索**：后端直接聚合公开频道与搜索插件，无需原站账号
 - **链接探活**：疑似失效弱提示（琥珀角标），真实转存给结论，不误拦
 - **推荐词 + 精选资源**：热词快搜与精选资源清单，点击即搜
 - **零运维**：纯静态页面，构建产物丢到任意静态托管即可运行
@@ -45,19 +45,18 @@
 
 > 构建时 `base` 已设为相对路径，部署在子路径（如 `/仓库名/`）也能正常工作。
 
-### Docker（镜像由 CI 自动发布到 GHCR，push 到 `main` 即更新）
+### Docker（前端镜像）
 
 ```bash
-docker run -d --name panhub.shenzjd.com -p 8080:80 ghcr.io/wu529778790/panhub.shenzjd.com:latest
+docker build -t panhub-frontend .
+docker run -d --name panhub-frontend -p 8080:80 panhub-frontend
 # 打开 http://localhost:8080
 ```
-
-> 本地没有镜像时 `docker run` 会自动拉取，无需手动 build。
 
 - 两阶段构建：Node 20 编译产物 → `nginx:1.27-alpine` 托管，镜像里不含源码与 node_modules
 - nginx 已配好 gzip、协商缓存（产物文件名固定不打 hash，no-cache + ETag 保证发版即生效）
   与 `try_files` 兜底，自带 `HEALTHCHECK`
-- 反代或端口映射随意（容器内监听 80），无需任何环境变量
+- 镜像只包含前端；搜索需要另行部署本仓库的 `backend/`，并由同域名 Nginx 将 `/api/` 代理到后端。
 
 ## 📦 支持平台
 
@@ -65,8 +64,21 @@ docker run -d --name panhub.shenzjd.com -p 8080:80 ghcr.io/wu529778790/panhub.sh
 
 ## 搜索服务
 
-搜索和资源获取依赖上游 PanHub 服务，匿名搜索仍使用其认证 SDK 申请匿名票据。
-本站不提供微信登录入口；上游要求身份验证时，相关资源无法在本站获取。
+`backend/` 基于 PanHub 旧版公开搜索核心，提供本地流式搜索和原始分享链接交付；
+不依赖原站的搜索、微信认证或转存接口。链接有效性检测目前标记为未支持，
+自动转存需要独立的网盘账号授权，当前仅返回搜索到的原始链接和提取码。
+
+后端需要 Node.js 22.21 或更新版本。安装与运行：
+
+```bash
+npm ci --prefix backend
+npm run build --prefix backend
+npm start --prefix backend
+```
+
+默认仅监听 `127.0.0.1:4100`；需通过 Nginx 将 `/api/` 反向代理到该端口。
+若访问搜索源需要代理，可为后端设置 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。
+运行接口测试：`npm test --prefix backend`。来源和版权说明见 `backend/NOTICE.md`。
 
 ## ⚠️ 注意事项
 

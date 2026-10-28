@@ -18,7 +18,6 @@
  */
 import { computed, ref } from "vue";
 import { ApiError, apiPost } from "../api/client";
-import { getAnonTicketSafe } from "../api/auth";
 import { isPromotionalLink } from "../utils/promotionalLinks";
 import { buildShareText, driverOf } from "../utils/shareText";
 
@@ -120,7 +119,7 @@ const anyBusy = computed(() => busyCount.value > 0);
  * 只对**会落到弹窗结果态**的路径补齐（成功 / 失效 / 回退 / 无兜底）；
  * 限流不补——那一条直接给下一步动作（换网盘/明天再来），让用户白等没有意义。
  */
-const MIN_LOADING_MS = 3000;
+const MIN_LOADING_MS = 200;
 
 /** 把 loading 态补足到最短展示时长（超过则立即返回，不额外等待） */
 async function ensureMinLoading(startedAt: number): Promise<void> {
@@ -205,6 +204,7 @@ export function useTransfer() {
     tid?: string;
     url: string;
     name?: string;
+    password?: string;
     /** 盘型（列表层的分组 key，如 quark/baidu）：直链已被后端全量剥离，
      *  前端拿不到 url，只能由调用方带下来——用于「今日额度已满」的本地记忆 */
     driver?: string;
@@ -242,14 +242,10 @@ export function useTransfer() {
       // 一律走后端换链接：有 tid → 服务端按注册表换回原链接再转存；
       // 没有 tid（正版合规源 / 旧缓存数据）→ 把 url 一并交给服务端，
       // 由它统一交付原链接。前端没有任何本地旁路。
-      // 匿名票据（对齐官方站 2026-09-24）：登录用户「获取」时顺手带上，服务端
-      // 验签通过后沉淀 (openid, anonId) 绑定；拿不到不影响主流程
       const doFetchTransfer = async () => {
         const payload: Record<string, unknown> = item.tid
           ? { id: item.tid }
-          : { url: item.url, name: item.name };
-        const anonTicket = await getAnonTicketSafe().catch(() => null);
-        if (anonTicket) payload.at = anonTicket;
+          : { url: item.url, name: item.name, password: item.password };
         return apiPost<{ code: number; data: any }>("/transfer", payload);
       };
       let shareText = item.url;

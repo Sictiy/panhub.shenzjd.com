@@ -17,7 +17,6 @@
  */
 import { ref } from "vue";
 import { apiPost } from "../api/client";
-import { getAnonTicketSafe } from "../api/auth";
 
 export type LinkCheckStatus =
   | "ok"
@@ -94,17 +93,7 @@ function createStore() {
     // 标记在途，防止同批次重复入队
     for (const it of items) inFlight.add(keyOf(it));
 
-    // 匿名票据（对齐官方站 2026-09-24 访客准入）：探活对访客同口径放行
-    //（服务端紧档频控），请求前把票拼在 URL 上；拿不到 → 不带，服务端按无票策略处理
-    const atPromise = getAnonTicketSafe().catch(() => null);
-
-    atPromise
-      .then((at) =>
-        apiPost<CheckResponse>(
-          at ? `/check?at=${encodeURIComponent(at)}` : "/check",
-          { items: items.map(payloadOf) }
-        )
-      )
+    apiPost<CheckResponse>("/check", { items: items.map(payloadOf) })
       .then((res) => {
         const results = res?.data?.results || [];
         if (results.length === 0) return;

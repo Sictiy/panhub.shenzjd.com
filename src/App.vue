@@ -268,9 +268,6 @@ async function onSearch() {
   if (!kw.value.trim()) return;
   if (paused.value) resetSearch();
   if (loading.value) return;
-  // 访客准入（对齐官方站 2026-09-24）：搜索不再强制登录，登录卡点收敛到
-  // 「获取」转存。匿名票据由 useSearch 在建连前自动拼在 URL 上
-  //（getAnonTicketSafe，fail-open：拿不到也照发，服务端按无票访客策略放行）。
   await doSearch();
 }
 

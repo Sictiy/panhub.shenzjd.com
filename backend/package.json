@@ -1,0 +1,21 @@
+{
+  "name": "panhub-local-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.mjs",
+    "start": "node --use-env-proxy dist/server.mjs",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "cheerio": "1.0.0",
+    "ofetch": "1.4.1",
+    "p-limit": "7.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "tsx": "4.20.6"
+  },
+  "engines": { "node": ">=22.21.0" }
+}

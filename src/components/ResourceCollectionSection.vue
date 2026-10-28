@@ -49,13 +49,12 @@
 <script setup lang="ts">
 /**
  * 资源合集区块（对齐官方站 2026-10-12）：迁移的 1849 个精选资源直接放首页。
- * 数据跨域取官方站 /resource-data/collection.json（CORS 已放开），
+ * 数据从本站的 /data/collection.json 加载，
  * 客户端懒加载（idle 时拉取），模块级缓存防重复请求。
  */
 import { computed, onMounted, ref } from "vue";
 import { CURATED_CATEGORIES } from "../config/curatedCategories";
 import { PLATFORM_INFO } from "../config/platforms";
-import { API_BASE } from "../config";
 import { isPromotionalLink } from "../utils/promotionalLinks";
 
 interface CollectionItem {
@@ -98,9 +97,7 @@ async function load() {
     return;
   }
   try {
-    // API_BASE 形如 https://panhub.shenzjd.com/api → 数据在同源根路径下
-    const origin = API_BASE.replace(/\/api\/?$/, "");
-    const res = await fetch(`${origin}/resource-data/collection.json`);
+    const res = await fetch("./data/collection.json");
     const data: CollectionPayload = await res.json();
     cache = Array.isArray(data?.items) ? data.items.filter((item) => !isPromotionalLink(item.u) && !isPromotionalLink(item.t)) : [];
   } catch {

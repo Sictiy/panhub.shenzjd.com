@@ -1,14 +1,9 @@
 /**
  * 统一请求封装
  *
- * 两条硬约束（第三方域名部署场景）：
- * 1. `credentials: "omit"`——不使用 Cookie。服务端 CORS 是
- *    `Access-Control-Allow-Origin: *`，浏览器的凭证模式请求会被直接拒绝；
- *    认证完全依赖 Authorization 头。
- * 2. 全部请求走绝对地址（API_BASE 前缀），不依赖当前站点路由。
+ * 请求通过同域名的 /api/ 代理访问独立后端，不使用登录凭证。
  */
 import { API_BASE } from "../config";
-import { getToken } from "./auth";
 
 export class ApiError extends Error {
   statusCode: number;
@@ -37,10 +32,9 @@ export function apiUrl(
   return qs ? `${url}?${qs}` : url;
 }
 
-/** 认证请求头：已登录时带上 Bearer，未登录返回空对象 */
+/** 本地后端不需要认证头。 */
 export function authHeaders(): Record<string, string> {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 
 async function readError(resp: Response): Promise<ApiError> {
