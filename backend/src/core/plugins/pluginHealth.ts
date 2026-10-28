@@ -43,6 +43,7 @@ export class PluginHealthChecker {
 
     current.successCount++;
     current.lastSuccessTime = Date.now();
+    current.failureCount = 0;
 
     // 更新平均响应时间（简单移动平均）
     current.avgResponseTime =

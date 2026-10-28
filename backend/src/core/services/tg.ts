@@ -1,11 +1,12 @@
-import { load } from "cheerio";
-import { ofetch } from "ofetch";
+import { load, type CheerioAPI } from "cheerio";
+import { requestFetch as ofetch } from "../utils/networkContext";
 import type { SearchResult } from "../types/models";
 import { matchesSearchKeyword } from "../utils/searchKeyword";
 
 export interface TgFetchOptions {
   limitPerChannel?: number;
   userAgent?: string;
+  signal?: AbortSignal;
 }
 
 export async function fetchTgChannelPosts(
@@ -23,21 +24,23 @@ export async function fetchTgChannelPosts(
   let before: string | undefined;
 
   for (let page = 0; page < maxPages && allResults.length < limit; page++) {
+    if (options.signal?.aborted) break;
     const baseUrl = `https://t.me/s/${encodeURIComponent(channel)}`;
     const url = before ? `${baseUrl}?before=${before}` : baseUrl;
 
     let html = "";
     try {
-      html = await ofetch<string>(url, { headers: { "user-agent": ua } });
+      html = await ofetch<string>(url, { headers: { "user-agent": ua }, signal: options.signal, timeout: 5000 });
     } catch {}
 
+    if (options.signal?.aborted) break;
     if (!html || !html.includes("tgme_widget_message")) {
       const mirrorUrl = before
         ? `https://r.jina.ai/https://t.me/s/${encodeURIComponent(channel)}?before=${before}`
         : `https://r.jina.ai/https://t.me/s/${encodeURIComponent(channel)}`;
 
       try {
-        html = await ofetch<string>(mirrorUrl, { headers: { "user-agent": ua } });
+        html = await ofetch<string>(mirrorUrl, { headers: { "user-agent": ua }, signal: options.signal, timeout: 5000 });
       } catch {}
     }
 
@@ -46,7 +49,7 @@ export async function fetchTgChannelPosts(
     }
 
     const $ = load(html || "");
-    const pageResults = parseChannelPage($, channel, keyword, limit - allResults.length);
+    const pageResults = parseChannelPage($, channel, keyword, limit - allResults.length, page * 1000);
     allResults.push(...pageResults);
 
     const nextLink = $('a[href*="before="]').first();
@@ -70,11 +73,12 @@ export async function fetchTgChannelPosts(
   return allResults;
 }
 
-function parseChannelPage(
-  $: cheerio.CheerioAPI,
+export function parseChannelPage(
+  $: CheerioAPI,
   channel: string,
   keyword: string,
-  limit: number
+  limit: number,
+  startIndex = 0
 ): SearchResult[] {
   const results: SearchResult[] = [];
 
@@ -97,11 +101,11 @@ function parseChannelPage(
     const host = hostname.toLowerCase();
     if (host === "t.me" || host.endsWith(".t.me")) return "";
     if (host === "r.jina.ai") return "";
-    if (host.endsWith("alipan.com") || host.endsWith("aliyundrive.com")) return "aliyun";
+    if (["alipan.com", "aliyundrive.com"].some(domain => host === domain || host.endsWith(`.${domain}`))) return "aliyun";
     if (host === "pan.baidu.com") return "baidu";
     if (host === "pan.quark.cn") return "quark";
     if (host === "pan.xunlei.com") return "xunlei";
-    if (host.endsWith("123pan.com")) return "123";
+    if (host === "123pan.com" || host.endsWith(".123pan.com")) return "123";
     if (host === "cloud.189.cn") return "tianyi";
     if (host === "115.com" || host.endsWith(".115.com")) return "115";
     if (host === "drive.uc.cn") return "uc";
@@ -123,27 +127,33 @@ function parseChannelPage(
 
     const links: { type: string; url: string; password: string }[] = [];
     const seenUrls = new Set<string>();
-    const urlPattern = /https?:\/\/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]+/g;
+    const urlPattern = /https?:\/\/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]+|magnet:\?[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]+/gi;
     const passwdPattern = /(?:提取码|密码|pwd|pass)[:：\s]*([a-zA-Z0-9]{3,6})/i;
 
     const addUrl = (raw: string) => {
-      const deproxied = deproxyUrl(raw);
-      let host = "";
-      try {
-        host = new URL(deproxied).hostname || "";
-      } catch {
-        return;
+      let url = deproxyUrl(raw);
+      let type = "";
+      if (/^magnet:\?/i.test(url)) {
+        try { if (new URL(url).searchParams.has("xt")) type = "magnet"; } catch {}
+      } else {
+        try {
+          let parsed = new URL(url);
+          if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return;
+          type = classifyByHostname(parsed.hostname);
+          if (!type && parsed.searchParams.has("url")) {
+            url = deproxyUrl(parsed.searchParams.get("url") || "");
+            parsed = new URL(url);
+            if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) return;
+            type = classifyByHostname(parsed.hostname);
+          }
+        } catch { return; }
       }
-      const type = classifyByHostname(host);
       if (!type) return;
-
-      const key = deproxied.toLowerCase();
+      const key = url.toLowerCase();
       if (seenUrls.has(key)) return;
       seenUrls.add(key);
-
       const m = text.match(passwdPattern);
-      const password = m ? m[1] : "";
-      links.push({ type, url: deproxied, password });
+      links.push({ type, url, password: m ? m[1] : "" });
     };
 
     const urlsFromText = text.match(urlPattern) || [];
@@ -188,9 +198,9 @@ function parseChannelPage(
 
     results.push({
       message_id: postId,
-      unique_id: `tg-${channel}-${postId || i}`,
+      unique_id: `tg-${channel}-${postId || startIndex + i}`,
       channel,
-      datetime: dateTitle ? new Date(dateTitle).toISOString() : "",
+      datetime: dateTitle && Number.isFinite(Date.parse(dateTitle)) ? new Date(dateTitle).toISOString() : "",
       title,
       content,
       links,

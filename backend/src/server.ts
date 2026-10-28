@@ -9,10 +9,10 @@ const service = getOrCreateSearchService({
   cacheEnabled: true,
 });
 const tasks = buildTasks(channels.priorityChannels, channels.defaultChannels);
-const app = createApp(async (keyword, category, task) => {
+const app = createApp(async (keyword, category, task, signal) => {
   const { response } = await service.searchWithWarnings(
     keyword, task.channels, 4, false, "merged_by_type", task.kind,
-    undefined, category ? [category] : undefined, {}
+    undefined, category ? [category] : undefined, {}, signal
   );
   return response.merged_by_type || {};
 }, tasks, 1);

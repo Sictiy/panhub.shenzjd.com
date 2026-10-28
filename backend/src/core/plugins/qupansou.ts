@@ -1,6 +1,6 @@
 import { BaseAsyncPlugin, registerGlobalPlugin } from "./manager";
 import type { SearchResult } from "../types/models";
-import { ofetch } from "ofetch";
+import { requestFetch as ofetch } from "../utils/networkContext";
 
 type ApiItem = {
   id: number;

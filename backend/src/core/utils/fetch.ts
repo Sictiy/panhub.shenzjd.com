@@ -5,6 +5,7 @@
 
 import { ofetch } from "ofetch";
 import type { $Fetch } from "ofetch";
+import { currentNetworkSignal, requestFetch } from "./networkContext";
 
 function normalizeError(error: unknown): Error {
   if (error instanceof Error) return error;
@@ -61,23 +62,30 @@ export async function fetchWithRetry<T = any>(
     logWarnings = true,
   } = retryOptions;
 
-  const fetcher: $Fetch = ofetch.create({
+  const signal = options.signal || currentNetworkSignal();
+  const fetchOptions = {
+    ...options,
     timeout,
+    retry: 0,
+    signal,
     headers: {
       "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       ...options.headers,
     },
-    ...options,
-  });
+  };
 
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const result = await fetcher<T>(url);
+      signal?.throwIfAborted();
+      const result = await requestFetch<T>(url, fetchOptions);
       return result;
     } catch (error) {
       lastError = error as Error;
+      if (signal?.aborted) throw signal.reason;
+      const status = (error as any)?.statusCode;
+      if (status >= 400 && status < 500 && status !== 408 && status !== 429) throw lastError;
 
       // 如果是最后一次尝试，抛出错误
       if (attempt === maxRetries) {
@@ -89,7 +97,14 @@ export async function fetchWithRetry<T = any>(
         ? baseDelay * Math.pow(2, attempt)
         : baseDelay;
 
-      await sleep(delay);
+      if (signal) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(); }, delay);
+          const onAbort = () => { clearTimeout(timer); reject(signal.reason); };
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted) onAbort();
+        });
+      } else await sleep(delay);
     }
   }
 

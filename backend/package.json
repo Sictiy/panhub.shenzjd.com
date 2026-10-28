@@ -6,7 +6,8 @@
   "scripts": {
     "build": "esbuild src/server.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server.mjs",
     "start": "node --use-env-proxy dist/server.mjs",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "cheerio": "1.0.0",
@@ -14,8 +15,12 @@
     "p-limit": "7.2.0"
   },
   "devDependencies": {
+    "@types/node": "22.20.5",
     "esbuild": "0.25.12",
-    "tsx": "4.20.6"
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
   },
-  "engines": { "node": ">=22.21.0" }
+  "engines": {
+    "node": ">=22.21.0"
+  }
 }

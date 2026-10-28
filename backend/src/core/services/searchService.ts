@@ -1,4 +1,6 @@
 import pLimit from "p-limit";
+import { withTimeout } from "../utils/timeout";
+import { runWithNetworkContext } from "../utils/networkContext";
 import { UnifiedCache, CacheNamespace } from "../cache/unifiedCache";
 import { safeExecute } from "../utils/fetch";
 import type { MergedLinks, SearchResponse, SearchResult } from "../types/models";
@@ -87,8 +89,10 @@ export class SearchService {
     sourceType: "all" | "tg" | "plugin" | undefined,
     plugins: string[] | undefined,
     cloudTypes: string[] | undefined,
-    ext: Record<string, any> | undefined
+    ext: Record<string, any> | undefined,
+    signal?: AbortSignal
   ): Promise<{ response: SearchResponse; warnings: WarningInfo[] }> {
+    signal?.throwIfAborted();
     const errorCollector = new ErrorCollector();
     const effChannels =
       channels && channels.length > 0 ? channels : this.options.defaultChannels;
@@ -116,7 +120,8 @@ export class SearchService {
           effChannels,
           !!forceRefresh,
           concOverride,
-          ext
+          ext,
+          signal
         );
       });
     }
@@ -128,12 +133,14 @@ export class SearchService {
           !!forceRefresh,
           effConcurrency,
           ext ?? {},
-          errorCollector
+          errorCollector,
+          signal
         );
       });
     }
 
     await Promise.all(tasks.map((task) => task()));
+    signal?.throwIfAborted();
 
     const allResults = this.mergeSearchResults(tgResults, pluginResults);
     this.sortResultsByTimeDesc(allResults);
@@ -188,7 +195,8 @@ export class SearchService {
     channels: string[] | undefined,
     forceRefresh: boolean,
     concurrencyOverride?: number,
-    ext?: Record<string, any>
+    ext?: Record<string, any>,
+    signal?: AbortSignal
   ): Promise<SearchResult[]> {
     const chList = Array.isArray(channels) ? channels : [];
     const cacheKey = `tg:${keyword}:${[...chList].sort().join(",")}`;
@@ -220,16 +228,14 @@ export class SearchService {
 
     const createChannelTask =
       (channel: string, limitPerChannel: number) => async () => {
+        if (signal?.aborted) return [];
         const result = await safeExecute(
-          () =>
-            this.withTimeout<SearchResult[]>(
-              fetchTgChannelPosts(channel, keyword, {
-                limitPerChannel,
-              }),
-              timeoutMs,
-              []
-            ),
-          []
+          () => withTimeout(
+            (sourceSignal) => fetchTgChannelPosts(channel, keyword, { limitPerChannel, signal: sourceSignal }),
+            timeoutMs,
+            signal,
+          ),
+          [] as SearchResult[],
         );
         return result;
       };
@@ -253,6 +259,7 @@ export class SearchService {
 
     let results = shallowResults;
     if (
+      !signal?.aborted &&
       results.length < SearchService.TG_DEEP_SEARCH_TRIGGER &&
       keyword.trim().length > 1 &&
       chList.length > 0
@@ -266,7 +273,7 @@ export class SearchService {
       results = this.mergeUniqueResults(results, deepResults);
     }
 
-    if (cacheEnabled && results.length > 0) {
+    if (!signal?.aborted && cacheEnabled && results.length > 0) {
       this.cache.set(CacheNamespace.TG_SEARCH, cacheKey, results);
     }
 
@@ -279,7 +286,8 @@ export class SearchService {
     forceRefresh: boolean,
     concurrency: number,
     ext: Record<string, any>,
-    errorCollector: ErrorCollector
+    errorCollector: ErrorCollector,
+    signal?: AbortSignal
   ): Promise<SearchResult[]> {
     const cacheKey = `plugin:${keyword}:${(plugins ?? [])
       .map((plugin) => plugin?.toLowerCase())
@@ -319,38 +327,34 @@ export class SearchService {
     );
 
     const pluginPromises = available.map((plugin) => async () => {
+      if (signal?.aborted) return [];
       plugin.setMainCacheKey(cacheKey);
       plugin.setCurrentKeyword(keyword);
-
       const startTime = Date.now();
       const pluginName = plugin.name();
-      const queries =
-        (keyword || "").trim().length <= 1
-          ? [keyword, "电影", "movie", "1080p"]
-          : buildSearchKeywordVariants(keyword).slice(0, 3);
-
+      const queries = (keyword || "").trim().length <= 1
+        ? [keyword, "电影", "movie", "1080p"]
+        : buildSearchKeywordVariants(keyword).slice(0, 3);
       let results: SearchResult[] = [];
-      for (const [index, query] of queries.entries()) {
-        const currentResults = await this.withTimeout<SearchResult[]>(
-          plugin.search(query, ext),
-          timeoutMs,
-          []
-        );
-
-        results = this.mergeUniqueResults(results, currentResults || []);
-
-        if (
-          results.length >= SearchService.PLUGIN_VARIANT_TRIGGER ||
-          index === queries.length - 1
-        ) {
-          break;
+      try {
+        for (const [index, query] of queries.entries()) {
+          signal?.throwIfAborted();
+          const currentResults = await withTimeout(async (sourceSignal) => {
+            const activity = { signal: sourceSignal, attempts: 0, successes: 0 };
+            const value = await runWithNetworkContext(activity, () => plugin.search(query, ext));
+            sourceSignal.throwIfAborted();
+            if (activity.attempts > 0 && activity.successes === 0) throw new Error("Search source unavailable");
+            return value;
+          }, timeoutMs, signal);
+          results = this.mergeUniqueResults(results, currentResults || []);
+          if (results.length >= SearchService.PLUGIN_VARIANT_TRIGGER || index === queries.length - 1) break;
         }
+        this.healthChecker.recordSuccess(pluginName, Date.now() - startTime);
+        return results;
+      } catch (error) {
+        if (!signal?.aborted) this.healthChecker.recordFailure(pluginName);
+        throw error;
       }
-
-      const responseTime = Date.now() - startTime;
-      this.healthChecker.recordSuccess(pluginName, responseTime);
-
-      return results;
     });
 
     const resultsByPlugin = await this.runWithConcurrency(
@@ -373,27 +377,11 @@ export class SearchService {
       }
     }
 
-    if (cacheEnabled && merged.length > 0) {
+    if (!signal?.aborted && cacheEnabled && merged.length > 0) {
       this.cache.set(CacheNamespace.PLUGIN_SEARCH, cacheKey, merged);
     }
 
     return merged;
-  }
-
-  private withTimeout<T>(
-    promise: Promise<T>,
-    ms: number,
-    fallback: T
-  ): Promise<T> {
-    if (!ms || ms <= 0) return promise;
-    let timeoutHandle: any;
-    const timeoutPromise = new Promise<T>((resolve) => {
-      timeoutHandle = setTimeout(() => resolve(fallback), ms);
-    });
-    return Promise.race([
-      promise.finally(() => clearTimeout(timeoutHandle)),
-      timeoutPromise,
-    ]) as Promise<T>;
   }
 
   private mergeSearchResults(
@@ -427,9 +415,11 @@ export class SearchService {
   }
 
   private sortResultsByTimeDesc(arr: SearchResult[]) {
-    arr.sort(
-      (x, y) => new Date(y.datetime).getTime() - new Date(x.datetime).getTime()
-    );
+    const timestamp = (value?: string) => {
+      const parsed = value ? Date.parse(value) : NaN;
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    arr.sort((a, b) => timestamp(b.datetime) - timestamp(a.datetime));
   }
 
   private getResultSource(_r: SearchResult): string {

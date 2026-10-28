@@ -1,6 +1,5 @@
 import { BaseAsyncPlugin, registerGlobalPlugin } from "./manager";
 import type { SearchResult } from "../types/models";
-import { ofetch } from "ofetch";
 import { load } from "cheerio";
 import { fetchWithRetry } from "../utils/fetch";
 import { createLogger } from "../utils/logger";

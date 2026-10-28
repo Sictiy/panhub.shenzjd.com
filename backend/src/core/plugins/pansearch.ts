@@ -2,6 +2,7 @@ import { BaseAsyncPlugin, registerGlobalPlugin } from "./manager";
 import type { SearchResult } from "../types/models";
 import { fetchWithRetry } from "../utils/fetch";
 import { createLogger } from "../utils/logger";
+import { ExpiringValue } from "../utils/expiringValue";
 
 const logger = createLogger("pansearch");
 
@@ -15,26 +16,28 @@ const DATA = (buildId: string) =>
   `https://www.pansearch.me/_next/data/${buildId}/search.json`;
 
 export class PansearchPlugin extends BaseAsyncPlugin {
-  constructor() {
+  constructor(private readonly fetcher: typeof fetchWithRetry = fetchWithRetry) {
     super("pansearch", 3);
   }
   override async search(keyword: string): Promise<SearchResult[]> {
-    const buildId = await getBuildId().catch(() => "");
+    let buildId = await getBuildId(this.fetcher).catch(() => "");
     if (!buildId) return [];
-    const url = `${DATA(buildId)}?keyword=${encodeURIComponent(
-      keyword
-    )}&offset=0`;
-    const resp = await fetchWithRetry<Resp>(
-      url,
-      {
-        headers: { "user-agent": "Mozilla/5.0" },
-      },
-      {
-        maxRetries: 2,
-        timeout: 8000,
-        logWarnings: false,
+    const fetchData = (id: string) => this.fetcher<Resp>(
+      `${DATA(id)}?keyword=${encodeURIComponent(keyword)}&offset=0`,
+      { headers: { "user-agent": "Mozilla/5.0" } },
+      { maxRetries: 2, timeout: 8000, logWarnings: false },
+    );
+    let resp: Resp | undefined;
+    try {
+      resp = await fetchData(buildId);
+    } catch (error) {
+      const status = (error as any)?.statusCode;
+      if ((status === 404 || status === 410) && cachedBuildId.get() === buildId) {
+        cachedBuildId.invalidateIf(buildId);
+        buildId = await getBuildId(this.fetcher).catch(() => "");
+        if (buildId) resp = await fetchData(buildId).catch(() => undefined);
       }
-    ).catch(() => undefined);
+    }
     const items = resp?.pageProps?.data?.data || [];
     const out: SearchResult[] = [];
     for (const it of items) {
@@ -56,8 +59,12 @@ export class PansearchPlugin extends BaseAsyncPlugin {
   }
 }
 
-async function getBuildId(): Promise<string> {
-  const html = await fetchWithRetry<string>(
+const cachedBuildId = new ExpiringValue<string>(60 * 60 * 1000);
+
+async function getBuildId(fetcher: typeof fetchWithRetry): Promise<string> {
+  const cached = cachedBuildId.get();
+  if (cached) return cached;
+  const html = await fetcher<string>(
     WEBSITE,
     {
       headers: { "user-agent": "Mozilla/5.0" },
@@ -69,7 +76,9 @@ async function getBuildId(): Promise<string> {
     }
   );
   const m = /"buildId":"([^"]+)"/.exec(html);
-  if (m) return m[1];
+  if (m) {
+    return cachedBuildId.set(m[1]);
+  }
   const m2 =
     /<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s.exec(
       html
@@ -77,7 +86,9 @@ async function getBuildId(): Promise<string> {
   if (m2) {
     try {
       const data = JSON.parse(m2[1]);
-      if (data?.buildId) return data.buildId;
+      if (data?.buildId && typeof data.buildId === "string") {
+        return cachedBuildId.set(data.buildId);
+      }
     } catch {}
   }
   throw new Error("no buildId");

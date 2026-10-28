@@ -56,3 +56,40 @@ test("limits concurrent searches and releases the slot after completion", async 
   await first.text();
   assert.equal((await fetch(`${base}/api/search.stream?kw=three`)).status, 200);
 });
+
+test("disconnect aborts the active provider and frees the search slot", async (t) => {
+  let aborted = false;
+  const app = createApp(async (keyword, _category, _task, signal) => {
+    if (keyword !== "cancel") return {};
+    await new Promise<void>(resolve => signal.addEventListener("abort", () => { aborted = true; resolve(); }, { once: true }));
+    return {};
+  }, [{ kind: "plugin" }], 1);
+  app.listen(0, "127.0.0.1");
+  await once(app, "listening");
+  t.after(() => app.close());
+  const base = `http://127.0.0.1:${(app.address() as any).port}`;
+  const response = await fetch(`${base}/api/search.stream?kw=cancel`);
+  const reader = response.body!.getReader();
+  await reader.read();
+  await reader.cancel();
+  for (let i = 0; i < 20 && !aborted; i++) await new Promise(r => setTimeout(r, 20));
+  assert.equal(aborted, true);
+  assert.equal((await fetch(`${base}/api/search.stream?kw=next`)).status, 200);
+});
+
+test("search rate limit returns Retry-After while unrelated health checks remain available", async (t) => {
+  const app = createApp(async () => ({}), []);
+  app.listen(0, "127.0.0.1");
+  await once(app, "listening");
+  t.after(() => app.close());
+  const base = `http://127.0.0.1:${(app.address() as any).port}`;
+  for (let i = 0; i < 20; i++) {
+    const res = await fetch(`${base}/api/search.stream?kw=test`, { headers: { "X-Forwarded-For": String(i) } });
+    assert.equal(res.status, 200);
+    await res.text();
+  }
+  const limited = await fetch(`${base}/api/search.stream?kw=test`, { headers: { "X-Forwarded-For": "another-forged-address" } });
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get("retry-after")) > 0);
+  assert.equal((await fetch(`${base}/api/health`)).status, 200);
+});

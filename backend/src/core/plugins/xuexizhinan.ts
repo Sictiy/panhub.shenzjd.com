@@ -1,6 +1,6 @@
 import { BaseAsyncPlugin, registerGlobalPlugin } from "./manager";
 import type { SearchResult } from "../types/models";
-import { ofetch } from "ofetch";
+import { requestFetch as ofetch } from "../utils/networkContext";
 import { load } from "cheerio";
 
 const SEARCH = (kw: string) =>
