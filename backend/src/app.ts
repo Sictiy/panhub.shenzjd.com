@@ -2,16 +2,17 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import type { MergedLinks } from "./core/types/models";
 import { clientAddress, RateLimiter } from "./rateLimit";
 
-export type SearchTask = { kind: "plugin" | "tg"; channels?: string[] };
+export type SearchTask = { kind: "plugin" | "tg"; channels?: string[]; plugins?: string[] };
 export type SearchProvider = (keyword: string, category: string | undefined, task: SearchTask, signal: AbortSignal) => Promise<MergedLinks>;
 
 const CATEGORIES = new Set(["quark", "baidu", "xunlei", "uc", "mobile", "tianyi", "aliyun", "115", "123", "magnet"]);
 const HOT_KEYWORDS = ["电影", "音乐", "动漫", "电子书", "编程", "摄影", "英语", "学习资料"];
 
-export function buildTasks(priority: string[], channels: string[]): SearchTask[] {
+export function buildTasks(priority: string[], channels: string[], plugins?: string[]): SearchTask[] {
   const all = [...new Set([...priority, ...channels])];
-  const tasks: SearchTask[] = [{ kind: "plugin" }];
-  for (let i = 0; i < all.length; i += 6) tasks.push({ kind: "tg", channels: all.slice(i, i + 6) });
+  const names = [...new Set(plugins ?? [])];
+  const tasks: SearchTask[] = names.length ? names.map(name => ({ kind: "plugin", plugins: [name] })) : [{ kind: "plugin" }];
+  for (const channel of all) tasks.push({ kind: "tg", channels: [channel] });
   return tasks;
 }
 
@@ -43,7 +44,7 @@ function validShareUrl(value: unknown): string | null {
   } catch { return null; }
 }
 
-export function createApp(provider: SearchProvider, tasks: SearchTask[], maxConcurrent = 2) {
+export function createApp(provider: SearchProvider, tasks: SearchTask[], maxConcurrent = 2, taskConcurrency = 12) {
   let activeSearches = 0;
   const limiter = new RateLimiter();
   return http.createServer(async (req, res) => {
@@ -95,10 +96,20 @@ export function createApp(provider: SearchProvider, tasks: SearchTask[], maxConc
         let count = initial;
         let reachedLimit = false;
         const send = (type: string, data: unknown) => { if (!closed) res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`); };
+        const pending = tasks.map((task, index) => ({ task, index })).filter(({ index }) => !skip.has(index));
+        const running = new Map<number, Promise<{ index: number; merged: MergedLinks }>>();
+        let next = 0;
+        const startTasks = () => {
+          while (!closed && next < pending.length && running.size < Math.max(1, taskConcurrency)) {
+            const { task, index } = pending[next++];
+            running.set(index, provider(keyword, category, task, controller.signal).then(merged => ({ index, merged })));
+          }
+        };
         try {
-          for (let index = 0; index < tasks.length && !closed; index++) {
-            if (skip.has(index)) continue;
-            const merged = await provider(keyword, category, tasks[index], controller.signal);
+          startTasks();
+          while (running.size && !closed) {
+            const { index, merged } = await Promise.race(running.values());
+            running.delete(index);
             if (closed) break;
             completed.push(index);
             for (const entries of Object.values(merged)) {
@@ -107,12 +118,19 @@ export function createApp(provider: SearchProvider, tasks: SearchTask[], maxConc
               }
             }
             send("chunk", { merged });
-            if (count >= limit && tasks.some((_, next) => next > index && !skip.has(next))) { reachedLimit = true; break; }
+            if (count >= limit && completed.length < pending.length) {
+              reachedLimit = true;
+              controller.abort();
+              break;
+            }
+            startTasks();
           }
           send("done", { completedIndices: completed, reachedLimit });
         } catch {
+          controller.abort();
           send("error", { message: "搜索服务暂时不可用，请稍后重试" });
         } finally {
+          await Promise.allSettled(running.values());
           activeSearches--;
           if (!closed) res.end();
         }

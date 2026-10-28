@@ -61,6 +61,25 @@ export function useSearch() {
   const autoPausedAtLimit = ref(false);
   /** 断点续跑：已完成的内部任务索引 */
   let completedTaskGidx = new Set<number>();
+  let elapsedTimer: ReturnType<typeof setInterval> | undefined;
+  let elapsedStarted = 0;
+  let elapsedBase = 0;
+
+  function startElapsedClock(): void {
+    stopElapsedClock();
+    elapsedBase = state.value.elapsedMs;
+    elapsedStarted = performance.now();
+    elapsedTimer = setInterval(() => {
+      state.value.elapsedMs = elapsedBase + Math.round(performance.now() - elapsedStarted);
+    }, 100);
+  }
+
+  function stopElapsedClock(): void {
+    if (elapsedTimer === undefined) return;
+    clearInterval(elapsedTimer);
+    elapsedTimer = undefined;
+    state.value.elapsedMs = elapsedBase + Math.round(performance.now() - elapsedStarted);
+  }
 
   function cancelActiveRequests(): void {
     for (const controller of activeControllers) {
@@ -75,11 +94,14 @@ export function useSearch() {
     if (state.value.loading || state.value.deepLoading) {
       autoPausedAtLimit.value = false;
       state.value.paused = true;
+      searchSeq++;
+      stopElapsedClock();
       cancelActiveRequests();
     }
   }
 
   function resetSearch(): void {
+    stopElapsedClock();
     cancelActiveRequests();
     searchSeq++;
     autoPausedAtLimit.value = false;
@@ -233,7 +255,7 @@ export function useSearch() {
       // 主动 abort（暂停 / 重置）不算失败
       const isAbort =
         error?.name === "AbortError" || error?.cause?.name === "AbortError";
-      if (!isAbort) {
+      if (!isAbort && mySeq === searchSeq) {
         state.value.error = "网络异常，搜索中断，请重试";
       }
     } finally {
@@ -267,7 +289,7 @@ export function useSearch() {
     autoPausedAtLimit.value = false;
 
     const mySeq = ++searchSeq;
-    const start = performance.now();
+    startElapsedClock();
 
     try {
       await runStream(options, mySeq);
@@ -275,7 +297,8 @@ export function useSearch() {
     } catch (error: any) {
       state.value.error = error?.message || "请求失败";
     } finally {
-      state.value.elapsedMs = Math.round(performance.now() - start);
+      if (mySeq !== searchSeq) return;
+      stopElapsedClock();
       // 暂停时保持 loading=true，让「继续」按钮留在原位
       if (!state.value.paused) state.value.loading = false;
       state.value.deepLoading = false;
@@ -295,12 +318,16 @@ export function useSearch() {
     const resumeTotal = resumingFresh ? 0 : state.value.total;
     const targetMax = resumeTotal + MAX_RESULTS_PER_ROUND;
     autoPausedAtLimit.value = false;
+    const mySeq = searchSeq;
+    startElapsedClock();
 
     try {
-      await runStream(options, searchSeq, resumeBase, resumeTotal, targetMax);
+      await runStream(options, mySeq, resumeBase, resumeTotal, targetMax);
     } catch {
       // 错误已在 runStream 内落库
     } finally {
+      if (mySeq !== searchSeq) return;
+      stopElapsedClock();
       state.value.deepLoading = false;
       if (!state.value.paused) state.value.loading = false;
     }

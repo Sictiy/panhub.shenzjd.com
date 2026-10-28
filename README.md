@@ -79,6 +79,7 @@ npm start --prefix backend
 默认仅监听 `127.0.0.1:4100`；需通过 Nginx 将 `/api/` 反向代理到该端口。
 若访问搜索源需要代理，可为后端设置 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。
 断开搜索连接会取消正在执行的上游请求；持续失败的搜索源会暂时熔断并自动恢复。
+插件和频道以受控并发方式搜索，结果按完成顺序逐步展示；页面用时仅统计实际搜索时间。
 每个客户端地址每分钟最多发起 20 次搜索；转存和检测接口各限 120 次；超限返回 HTTP 429。
 运行接口测试：`npm test --prefix backend`；类型检查：`npm run typecheck --prefix backend`。
 来源和版权说明见 `backend/NOTICE.md`。

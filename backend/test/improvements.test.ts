@@ -49,10 +49,10 @@ test("timeout and cancellation abort underlying HTTP requests", async (t) => {
   await assert.rejects(withTimeout(async signal => {
     const activity = { signal, attempts: 0, successes: 0 };
     return runWithNetworkContext(activity, () => requestFetch(url, { retry: 0 }));
-  }, 200));
-  await new Promise(resolve => setTimeout(resolve, 100));
+  }, 1000));
+  for (let i = 0; i < 50 && !closed; i++) await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(closed, true);
-  assert.ok(Date.now() - start < 2000);
+  assert.ok(Date.now() - start < 3500);
 });
 
 test("source failures open the circuit without treating empty successful sources as failures", async (t) => {

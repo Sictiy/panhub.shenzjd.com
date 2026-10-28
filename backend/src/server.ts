@@ -8,11 +8,11 @@ const service = getOrCreateSearchService({
   pluginTimeoutMs: 5000,
   cacheEnabled: true,
 });
-const tasks = buildTasks(channels.priorityChannels, channels.defaultChannels);
+const tasks = buildTasks(channels.priorityChannels, channels.defaultChannels, channels.defaultPlugins);
 const app = createApp(async (keyword, category, task, signal) => {
   const { response } = await service.searchWithWarnings(
     keyword, task.channels, 4, false, "merged_by_type", task.kind,
-    undefined, category ? [category] : undefined, {}, signal
+    task.plugins, category ? [category] : undefined, {}, signal
   );
   return response.merged_by_type || {};
 }, tasks, 1);
